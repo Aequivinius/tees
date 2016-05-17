@@ -62,7 +62,8 @@ def mywrapper(input_text):
 	
 	pa = None
 	with gzip.open('output/{}-pred.xml.gz'.format(tf.name)) as f:
-		pa = tees_to_pubannotation(f.read())
+		# pa = tees_to_pubannotation(f.read())
+		pa = tees_events_to_pubannotation(f.read())
 	
 	for f in os.listdir('output'):
 		g = os.path.join('output',f)
@@ -73,6 +74,39 @@ def mywrapper(input_text):
 			print(e)
 	return(pa)
 	
+def tees_events_to_pubannotation(input):
+	root = ET.fromstring(input) # from parses directly into an Element
+	text = root.find("document").get("text")
+	
+	# now, entities are denotations, and interactions are relations
+		
+	pre_json = { "text" : text }
+	pre_json["denotations"] = list()
+	pre_json["relations"] = list()
+	
+	
+	for entity in root.findall(".//entity"):
+		entity_dict = dict()
+		entity_dict["id"] = entity.get("id")
+		
+		start_span , end_span = entity.get("charOffset").split("-")
+		entity_dict["span"] = { "begin" : int(start_span) , "end" : int(end_span) }
+		
+		entity_dict["obj"] = entity.get("type")
+		
+		pre_json["denotations"].append(entity_dict)
+	
+	for interaction in root.findall(".//interaction"):
+		interaction_dict = dict()
+		interaction_dict["id"] = interaction.get("id")
+		interaction_dict["subj"] = interaction.get("e1")
+		interaction_dict["obj"] = interaction.get("e2")
+		interaction_dict["pred"] = interaction.get("type")
+		
+		pre_json["relations"].append(interaction_dict)		
+	return(json.dumps(pre_json,sort_keys=True,indent=4))	
+		
+
 def tees_to_pubannotation(input):
 	
 	root = ET.fromstring(input) # from parses directly into an Element
@@ -112,9 +146,10 @@ def myclassify(input,output):
 #	model = getModel(model)
 #	preprocessor = Preprocessor()
 	
-	classifyInput = preprocessor.process(input, (output + "-preprocessed.xml.gz"), None, model, [], fromStep=detectorSteps["PREPROCESS"])
-				
-	detector.classify(classifyInput, model, output, fromStep=detectorSteps["CLASSIFY"])
+	classifyInput = preprocessor.process(input, (output + "-preprocessed.xml.gz"), None, model, [], fromStep=detectorSteps["PREPROCESS"],omitSteps=["TEST","EVALUATE"])
+	
+	
+	detector.classify(classifyInput, model, output, fromStep=detectorSteps["CLASSIFY"],omitSteps=["TEST","EVALUATE"])
 	
 
 
