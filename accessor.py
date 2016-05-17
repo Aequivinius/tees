@@ -5,39 +5,73 @@
 
 # input needs to be in interaction XML?
 
-from Detectors.Preprocessor import Preprocessor
-from train import workdir, getDetector, getSteps
+from jbjorne.Detectors.Preprocessor import Preprocessor
+from jbjorne.train import workdir, getDetector, getSteps
 import os
 import gzip
-from classify import classify , getModel
+from jbjorne.classify import classify , getModel
 
 import xml.etree.ElementTree as ET
 import json
+import shutil
 
 from flask import Flask, request , make_response , render_template
+
+import tempfile
 
 app = Flask(__name__)
 
 
-@app.route('/tee_rest/', methods = ['GET','POST'])
+@app.route('/tees_rest/', methods = ['GET','POST'])
 def rest():
-	result = mywrapper(request.form['text'])
-#	if 'text' in request.get_json():
-#		result = mywrapper(request.get_json()['text'])
-	return(result)
+	"""Requests using curl -d supplying a 'text' argument"""
+	
+	if request.headers['Content-Type'] == 'application/json':
+		if 'text' in request.get_json():
+			try:
+				result = mywrapper(request.get_json()['text'])
+				return(result)
+			except Exception as e:
+				print(e)
+				return("Error while processing request for '{}'.\n".format(request.get_json()['text']),500)
+		return(400)
+	
+	if request.headers['Content-Type'] == 'application/x-www-form-urlencoded':
+		if 'text' in request.form:
+			try:
+				result = mywrapper(request.form['text'])
+				return(result)
+			except Exception as e:
+				print(e)
+				return("Error while processing request for '{}'.\n".format(request.form['text']),500)
+		return(400)
+		
+	return("Unsupported media type.",415)
 
 def mywrapper(input_text):
-	with open('working_file.txt','w') as f:
+	
+	# could also use import uuid
+	# tf = str(uuid.uuid4())
+	tf = tempfile.NamedTemporaryFile(suffix=".txt")
+		
+	with open(tf.name,'w') as f:
 		f.write(input_text)
 		
-	myclassify('working_file.txt','output/output')
+	myclassify(tf.name,'output/' + tf.name)
+	os.remove(tf.name)
 	
-	os.remove('working_file.txt')
-	
-	with gzip.open('output/output-pred.xml.gz') as f:
+	pa = None
+	with gzip.open('output/{}-pred.xml.gz'.format(tf.name)) as f:
 		pa = tees_to_pubannotation(f.read())
-		print(pa)
-		return(pa)
+	
+	for f in os.listdir('output'):
+		g = os.path.join('output',f)
+		try:
+			if os.path.isfile(g):
+				os.remove(g)
+		except Exception as e:
+			print(e)
+	return(pa)
 	
 def tees_to_pubannotation(input):
 	
@@ -78,17 +112,13 @@ def myclassify(input,output):
 #	model = getModel(model)
 #	preprocessor = Preprocessor()
 	
-	classifyInput = preprocessor.process(input, (output + "-preprocessed.xml.gz"), None, model, [], fromStep=detectorSteps["PREPROCESS"], toStep=None, omitSteps=omitDetectorSteps["PREPROCESS"])
-			
-#	detector = getDetector(None, model)[0]() # initialize detector object
-	
-#	detector.bioNLPSTParams = detector.getBioNLPSharedTaskParams(None, model)
-	
-	detector.classify(classifyInput, model, output, fromStep=detectorSteps["CLASSIFY"], omitSteps=omitDetectorSteps["CLASSIFY"])
+	classifyInput = preprocessor.process(input, (output + "-preprocessed.xml.gz"), None, model, [], fromStep=detectorSteps["PREPROCESS"])
+				
+	detector.classify(classifyInput, model, output, fromStep=detectorSteps["CLASSIFY"])
 	
 
 
-model = getModel("GE11")
+model = getModel("GE11-test")
 preprocessor = Preprocessor()
 detector = getDetector(None, model)[0]()
 
