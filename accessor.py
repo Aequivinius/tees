@@ -70,8 +70,11 @@ def mywrapper(input_text):
 		try:
 			if os.path.isfile(g):
 				os.remove(g)
+			elif os.path.isdir(g):
+				shutil.rmtree(g)
 		except Exception as e:
 			print(e)
+	print(pa)
 	return(pa)
 	
 def tees_events_to_pubannotation(input):
@@ -84,17 +87,20 @@ def tees_events_to_pubannotation(input):
 	pre_json["denotations"] = list()
 	pre_json["relations"] = list()
 	
-	
-	for entity in root.findall(".//entity"):
-		entity_dict = dict()
-		entity_dict["id"] = entity.get("id")
-		
-		start_span , end_span = entity.get("charOffset").split("-")
-		entity_dict["span"] = { "begin" : int(start_span) , "end" : int(end_span) }
-		
-		entity_dict["obj"] = entity.get("type")
-		
-		pre_json["denotations"].append(entity_dict)
+	for sentence in root.findall(".//sentence"):
+		sentence_offset = int(sentence.get("charOffset").split("-")[0])
+		for entity in sentence.findall(".//entity"):
+			entity_dict = dict()
+			entity_dict["id"] = entity.get("id")
+			
+			start_span , end_span = entity.get("charOffset").split("-")
+			start_span = int(start_span)
+			end_span = int(end_span)
+			entity_dict["span"] = { "begin" : sentence_offset+start_span , "end" : sentence_offset+end_span }
+			
+			entity_dict["obj"] = entity.get("type")
+			
+			pre_json["denotations"].append(entity_dict)
 	
 	for interaction in root.findall(".//interaction"):
 		interaction_dict = dict()
@@ -146,15 +152,16 @@ def myclassify(input,output):
 #	model = getModel(model)
 #	preprocessor = Preprocessor()
 	
-	classifyInput = preprocessor.process(input, (output + "-preprocessed.xml.gz"), None, model, [], fromStep=detectorSteps["PREPROCESS"],omitSteps=["TEST","EVALUATE"])
+	classifyInput = preprocessor.process(input, (output + "-preprocessed.xml.gz"), None, model, [], fromStep=detectorSteps["PREPROCESS"],omitSteps=["TEST","EVALUATE","EVALUATION"])
 	
 	
-	detector.classify(classifyInput, model, output, fromStep=detectorSteps["CLASSIFY"],omitSteps=["TEST","EVALUATE"])
+	detector.classify(classifyInput, model, output, fromStep=detectorSteps["CLASSIFY"],omitSteps=["TEST","EVALUATE","EVALUATION"])
 	
 
 
 model = getModel("GE11-test")
 preprocessor = Preprocessor()
+preprocessor.stepArgs("PARSE")["requireEntities"] = True
 detector = getDetector(None, model)[0]()
 
 if __name__=="__main__":
