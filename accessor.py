@@ -78,18 +78,18 @@ def input_to_response(input):
 	# write input to temporary file
 	td = tempfile.mkdtemp()
 	to = os.path.join(td,'output')
+	ti = os.path.join(td,'input.txt')
 	
-	with open(os.path.join(td,'input.txt'),'w+b') as tf:
+	with open(ti,'wb+') as tf:
 		tf.write(input)
-		tees_wrapper(tf.name,to)
+		# because we're writing in binary mode for better cross-platformibility
+		tf.seek(0) 
+		tees_wrapper(ti,to)
 	
 	try:
 		with gzip.open(str(to) + '-pred.xml.gz') as xml:
-	
 			json_ = xml_events_to_json(xml.read())
-	
 			response = json_to_response(json_)
-	
 			return(response)
 	except Exception as e:
 		print(e)
@@ -158,7 +158,9 @@ def xml_events_to_json(input):
 		pre_json["relations"].append(interaction_dict)
 		
 	# prettify before returning
-	return(json.dumps(pre_json,sort_keys=True,indent=4))	
+	pretty_json = json.dumps(pre_json,sort_keys=True,indent=4)
+	print(pretty_json)
+	return(pretty_json)	
 		
 
 def xml_to_json(input):
