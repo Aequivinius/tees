@@ -1,92 +1,129 @@
 #!/usr/bin/env python
 
-# when calling command line, we call classify with different options
-# can be called classify(input,model,output)
+"""Runs a server using Flask which will listen to requests on /tees_rest/.
+   Input text will be processed using TEES pipeline, and events found by
+   TEES returned in PubAnnotate JSON"""
 
-# input needs to be in interaction XML?
+#######
+# TO DO
+#######
 
+# The TEES pipeline is slow AF, and I think it's got to do
+# with the fact that it tries to evaluate : BioNLP11GeniaTools.py
+# will print a message in the end, which is not needed at all
+
+# Ideally, we find a way to create a new process for every request
+# so we don't get cross-talk
+
+# Finally, we could look into asynchronous REST, since it takes
+# some 40s per document
+
+# here jbjorne refers to the directory containing TEES
+# assumed to be in the same directory as this accessor.py
 from jbjorne.Detectors.Preprocessor import Preprocessor
-from jbjorne.train import workdir, getDetector, getSteps
+from jbjorne.train import getDetector, getSteps
+from jbjorne.classify import getModel
+
+from flask import Flask, request , make_response
+
+from helpers import trunc
+
 import os
 import gzip
-from jbjorne.classify import classify , getModel
-
 import xml.etree.ElementTree as ET
 import json
+import tempfile
 import shutil
 
-from flask import Flask, request , make_response , render_template
-
-import tempfile
-
+# initialise Flask in order to be able to deal
+# with decorators such as @app.route below
 app = Flask(__name__)
 
-
+# listen to /tees_rest/ for requests
 @app.route('/tees_rest/', methods = ['GET','POST'])
 def rest():
 	"""Requests using curl -d supplying a 'text' argument"""
 	
-	if request.headers['Content-Type'] == 'application/json':
-		if 'text' in request.get_json():
-			try:
-				result = mywrapper(request.get_json()['text'])
-				return(result)
-			except Exception as e:
-				print(e)
-				return("Error while processing request for '{}'.\n".format(request.get_json()['text']),500)
-		return(400)
-	
-	if request.headers['Content-Type'] == 'application/x-www-form-urlencoded':
-		if 'text' in request.form:
-			try:
-				result = mywrapper(request.form['text'])
-				return(result)
-			except Exception as e:
-				print(e)
-				return("Error while processing request for '{}'.\n".format(request.form['text']),500)
-		return(400)
+	# 'text' can hide in two locations:
+	# in request.form['text'] or in request.get_json()['text']
+	if request.get_json() and 'text' in request.get_json():
+		input = request.get_json()['text']
+	elif request.form and 'text' in request.form:
+		input = request.form['text']
+	else:
+		return("Could not find 'text' attribute to process.",400)
 		
-	return("Unsupported media type.",415)
+	# Check if input is ASCII
+	try:
+		input.decode('ascii')
+	except UnicodeDecodeError:
+		return("Currently, the pipeline can only process ASCII-encoded input",400)
+	
+	# call the pipeline
+	try:
+		result = input_to_response(input)
+		return(result,200)
+	except Exception as e:
+		print(e)
+		return("Error while processing request for '{}'.\n".format(trunc(input)),500)
 
-def mywrapper(input_text):
+#####################
+# THE ACTUAL PIPELINE
+#####################
+def input_to_response(input):
+	"""Prepares input for the TEES pipeline to read, runs the pipeline and returns JSON response."""
 	
-	# could also use import uuid
-	# tf = str(uuid.uuid4())
-	tf = tempfile.NamedTemporaryFile(suffix=".txt")
-		
-	with open(tf.name,'w') as f:
-		f.write(input_text)
-		
-	myclassify(tf.name,'output/' + tf.name)
-	os.remove(tf.name)
+	# pipeline only accepts input as file, or I haven't
+	# found a way to supply text directly yet, so we
+	# write input to temporary file
+	td = tempfile.mkdtemp()
+	to = os.path.join(td,'output')
 	
-	pa = None
-	with gzip.open('output/{}-pred.xml.gz'.format(tf.name)) as f:
-		# pa = tees_to_pubannotation(f.read())
-		pa = tees_events_to_pubannotation(f.read())
+	with open(os.path.join(td,'input.txt'),'w+b') as tf:
+		tf.write(input)
+		tees_wrapper(tf.name,to)
 	
-	for f in os.listdir('output'):
-		g = os.path.join('output',f)
-		try:
-			if os.path.isfile(g):
-				os.remove(g)
-			elif os.path.isdir(g):
-				shutil.rmtree(g)
-		except Exception as e:
-			print(e)
-	print(pa)
-	return(pa)
+	try:
+		with gzip.open(str(to) + '-pred.xml.gz') as xml:
 	
-def tees_events_to_pubannotation(input):
-	root = ET.fromstring(input) # from parses directly into an Element
-	text = root.find("document").get("text")
+			json_ = xml_events_to_json(xml.read())
 	
-	# now, entities are denotations, and interactions are relations
-		
+			response = json_to_response(json_)
+	
+			return(response)
+	except Exception as e:
+		print(e)
+	
+	finally:
+		# clean up temporary folders & files
+		shutil.rmtree(td)
+	
+def json_to_response(json_):
+	"""Adds information to response headers to smoother running."""
+	response = make_response(json_)
+
+	# This is necessary to allow the REST be accessed from other domains
+	response.headers['Access-Control-Allow-Origin'] = '*'
+
+	response.headers['Content-Type'] = 'application/json'
+	response.headers['Content-Length'] = len(json_)
+	response.headers['X-Content-Type-Options'] = 'nosniff'
+	response.headers['charset'] = 'ascii'
+	return(response)
+
+def xml_events_to_json(input):
+	"""Extracts events from XML and rephrases them into JSON:
+	   Entities are stored as denotations, interactions as relations."""
+
+	root = ET.fromstring(input) # fromstring parses directly into an Element
+	text = root.find("document").get("text")		
 	pre_json = { "text" : text }
 	pre_json["denotations"] = list()
 	pre_json["relations"] = list()
 	
+	# for entities, the offset is stored on a per-sentence basis in the XML
+	# thus we need to traverse sentence to sentence to recompute offsets
+	# to be valid in the per-document view
 	for sentence in root.findall(".//sentence"):
 		sentence_offset = int(sentence.get("charOffset").split("-")[0])
 		for entity in sentence.findall(".//entity"):
@@ -102,19 +139,30 @@ def tees_events_to_pubannotation(input):
 			
 			pre_json["denotations"].append(entity_dict)
 	
+	# these are our relations
 	for interaction in root.findall(".//interaction"):
 		interaction_dict = dict()
 		interaction_dict["id"] = interaction.get("id")
-		interaction_dict["subj"] = interaction.get("e1")
-		interaction_dict["obj"] = interaction.get("e2")
-		interaction_dict["pred"] = interaction.get("type")
+
+		# to make compatible with BioNLP 2016 GE-task,
+		# we change 'A Theme B' to 'B themeOf A'
+		if interaction.get("type") in [ "Theme" , "theme" ]:
+			interaction_dict["subj"] = interaction.get("e2")
+			interaction_dict["obj"] = interaction.get("e1")
+			interaction_dict["pred"] = "themeOf"
+		else:	
+			interaction_dict["subj"] = interaction.get("e1")
+			interaction_dict["obj"] = interaction.get("e2")
+			interaction_dict["pred"] = interaction.get("type")
 		
-		pre_json["relations"].append(interaction_dict)		
+		pre_json["relations"].append(interaction_dict)
+		
+	# prettify before returning
 	return(json.dumps(pre_json,sort_keys=True,indent=4))	
 		
 
-def tees_to_pubannotation(input):
-	
+def xml_to_json(input):
+	"""Exctracts PoS and parse information from XML"""
 	root = ET.fromstring(input) # from parses directly into an Element
 	text = root.find("document").get("text")
 		
@@ -144,27 +192,23 @@ def tees_to_pubannotation(input):
 		pre_json["relations"].append(relation_dict)		
 	return(json.dumps(pre_json,sort_keys=True,indent=4))
 
-def myclassify(input,output):
+def tees_wrapper(input,output):
+	"""Runs the TEES pipeline. Will read input text file, and write to output directory"""
 	
 	# Define processing steps
 	selector, detectorSteps, omitDetectorSteps = getSteps(None, None, ["PREPROCESS", "CLASSIFY"])
 	
-#	model = getModel(model)
-#	preprocessor = Preprocessor()
-	
+	# The TEES documentation is very annoying, making it a big hassle and guessing game
+	# Which arguments to supply where
 	classifyInput = preprocessor.process(input, (output + "-preprocessed.xml.gz"), None, model, [], fromStep=detectorSteps["PREPROCESS"],omitSteps=["TEST","EVALUATE","EVALUATION"])
 	
-	
 	detector.classify(classifyInput, model, output, fromStep=detectorSteps["CLASSIFY"],omitSteps=["TEST","EVALUATE","EVALUATION"])
-	
 
-
-model = getModel("GE11-test")
+# GLOBAL variables held in memory by the server
+model = getModel("GE11")
 preprocessor = Preprocessor()
-preprocessor.stepArgs("PARSE")["requireEntities"] = True
+preprocessor.stepArgs("PARSE")["requireEntities"] = True # this will speed up processing
 detector = getDetector(None, model)[0]()
 
 if __name__=="__main__":
-#	mywrapper("I saw the best minds of my generation destroyed by madness, starving hysterical naked, dragging themselves to the Negro streets at dawn looking for an angry fix.")
-
 	app.run(debug=True)
