@@ -143,16 +143,24 @@ def xml_events_to_json(input):
 	for interaction in root.findall(".//interaction"):
 		interaction_dict = dict()
 		interaction_dict["id"] = interaction.get("id")
+		interaction_dict["subj"] = interaction.get("e2")
+		interaction_dict["obj"] = interaction.get("e1")
 
 		# to make compatible with BioNLP 2016 GE-task,
-		# we change 'A Theme B' to 'B themeOf A'
+		# we change 'A Theme B' to 'B themeOf A' etc.
 		if interaction.get("type") in [ "Theme" , "theme" ]:
-			interaction_dict["subj"] = interaction.get("e2")
-			interaction_dict["obj"] = interaction.get("e1")
 			interaction_dict["pred"] = "themeOf"
+			
+		elif interaction.get("type") in [ "Cause" , "cause" ]:
+			interaction_dict["pred"] = "causeOf"
+			
+		elif interaction.get("type") in [ "AtLoc" , "atLoc" , "ToLoc" , "toLoc" ]:
+			interaction_dict["pred"] = "locationOf"
+			
+		elif interaction.get("type") in [ "SiteParent" , "siteParent" ]:
+			interaction_dict["pred"] = "partOf"
+				
 		else:	
-			interaction_dict["subj"] = interaction.get("e1")
-			interaction_dict["obj"] = interaction.get("e2")
 			interaction_dict["pred"] = interaction.get("type")
 		
 		pre_json["relations"].append(interaction_dict)
