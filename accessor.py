@@ -149,16 +149,16 @@ def xml_events_to_json(input):
 		# to make compatible with BioNLP 2016 GE-task,
 		# we change 'A Theme B' to 'B themeOf A' etc.
 		if interaction.get("type") in [ "Theme" , "theme" ]:
-			interaction_dict["pred"] = "themeOf"
+			interaction_dict["pred"] = "ThemeOf"
 			
 		elif interaction.get("type") in [ "Cause" , "cause" ]:
-			interaction_dict["pred"] = "causeOf"
+			interaction_dict["pred"] = "CauseOf"
 			
 		elif interaction.get("type") in [ "AtLoc" , "atLoc" , "ToLoc" , "toLoc" ]:
-			interaction_dict["pred"] = "locationOf"
+			interaction_dict["pred"] = "LocationOf"
 			
 		elif interaction.get("type") in [ "SiteParent" , "siteParent" ]:
-			interaction_dict["pred"] = "partOf"
+			interaction_dict["pred"] = "PartOf"
 				
 		else:	
 			interaction_dict["pred"] = interaction.get("type")
