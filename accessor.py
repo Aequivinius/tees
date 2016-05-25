@@ -88,7 +88,10 @@ def input_to_response(input):
 	
 	try:
 		with gzip.open(str(to) + '-pred.xml.gz') as xml:
-			json_ = xml_events_to_json(xml.read())
+			xml_text = xml.read()
+			with open('last_request.xml','w') as copy:
+				copy.write(xml_text)
+			json_ = xml_events_to_json(xml_text)
 			response = json_to_response(json_)
 			return(response)
 	except Exception as e:
@@ -120,6 +123,8 @@ def xml_events_to_json(input):
 	pre_json = { "text" : text }
 	pre_json["denotations"] = list()
 	pre_json["relations"] = list()
+	pre_json["modifications"] = list()
+	modification_counter = 1
 	
 	# for entities, the offset is stored on a per-sentence basis in the XML
 	# thus we need to traverse sentence to sentence to recompute offsets
@@ -138,6 +143,26 @@ def xml_events_to_json(input):
 			entity_dict["obj"] = entity.get("type")
 			
 			pre_json["denotations"].append(entity_dict)
+			
+			# check if the entity is negated
+			if entity.get("negation") in [ "True" , "true" ]:
+				modification_dict = dict()
+				modification_dict['id'] = "M" + str(modification_counter)
+				modification_counter += 1
+				
+				modification_dict['pred'] = "Negation"
+				modification_dict['obj'] = entity.get("id")
+				pre_json["modifications"].append(modification_dict)
+				
+			if entity.get("speculation") in [ "True" , "true" ]:
+				modification_dict = dict()
+				modification_dict['id'] = "M" + str(modification_counter)
+				modification_counter += 1
+				
+				modification_dict['pred'] = "Speculation"
+				modification_dict['obj'] = entity.get("id")
+				pre_json["modifications"].append(modification_dict)
+				
 	
 	# these are our relations
 	for interaction in root.findall(".//interaction"):
@@ -164,7 +189,7 @@ def xml_events_to_json(input):
 			interaction_dict["pred"] = interaction.get("type")
 		
 		pre_json["relations"].append(interaction_dict)
-		
+	
 	# prettify before returning
 	pretty_json = json.dumps(pre_json,sort_keys=True,indent=4)
 	print(pretty_json)
